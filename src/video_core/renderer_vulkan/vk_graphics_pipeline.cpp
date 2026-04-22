@@ -305,10 +305,9 @@ GraphicsPipeline::GraphicsPipeline(
             (alpha_blend == vk::BlendOp::eMin || alpha_blend == vk::BlendOp::eMax) &&
             (src_alpha != vk::BlendFactor::eOne || dst_alpha != vk::BlendFactor::eOne);
         if (color_scaled_min_max || alpha_scaled_min_max) {
-            LOG_WARNING(Render_Vulkan, "Unimplemented use of min/max blend op with blend factor "
-                                       "not equal to one, using shader fallback.");
-
-            attachments[i].blendEnable = false;
+            LOG_WARNING(
+                Render_Vulkan,
+                "Unimplemented use of min/max blend op with blend factor not equal to one.");
         }
 
         attachments[i] = vk::PipelineColorBlendAttachmentState{

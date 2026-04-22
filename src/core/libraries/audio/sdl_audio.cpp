@@ -78,7 +78,7 @@ public:
             stream = nullptr;
             return;
         }
-        SDL_SetAudioStreamGain(stream, Config::getVolumeSlider() / 300.0f);
+        SDL_SetAudioStreamGain(stream, Config::getVolumeSlider() / 100.0f);
     }
 
     ~SDLPortBackend() override {
@@ -114,11 +114,8 @@ public:
         }
         // SDL does not have per-channel volumes, for now just take the maximum of the channels.
         const auto vol = *std::ranges::max_element(ch_volumes);
-        float sliderFactor = static_cast<float>(Config::getVolumeSlider()) / 100.0f;
-        float gain = (Config::isMuteEnabled()
-                          ? 0.0f
-                          : (static_cast<float>(vol) / SCE_AUDIO_OUT_VOLUME_0DB) * sliderFactor);
-        if (!SDL_SetAudioStreamGain(stream, gain)) {
+        if (!SDL_SetAudioStreamGain(stream, static_cast<float>(vol) / SCE_AUDIO_OUT_VOLUME_0DB *
+                                                Config::getVolumeSlider() / 100.0f)) {
             LOG_WARNING(Lib_AudioOut, "Failed to change SDL audio stream volume: {}",
                         SDL_GetError());
         }

@@ -82,7 +82,9 @@ void Scheduler::Finish() {
 
 void Scheduler::Wait(u64 tick) {
     if (tick >= master_semaphore.CurrentTick()) {
-        Flush();
+        // Make sure we are not waiting for the current tick without signalling
+        SubmitInfo info{};
+        Flush(info);
     }
     master_semaphore.Wait(tick);
 }

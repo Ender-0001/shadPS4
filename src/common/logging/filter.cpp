@@ -158,8 +158,7 @@ bool ParseFilterRule(Filter& instance, Iterator begin, Iterator end) {
     CLS(ImGui)                                                                                     \
     CLS(Input)                                                                                     \
     CLS(Tty)                                                                                       \
-    CLS(Loader)                                                                                    \
-    CLS(IPC)
+    CLS(Loader)
 
 // GetClassName is a macro defined by Windows.h, grrr...
 const char* GetLogClassName(Class log_class) {

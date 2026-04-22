@@ -241,14 +241,19 @@ struct AddressSpace::Impl {
                 ASSERT_MSG(ret, "VirtualProtect failed. {}", Common::GetLastErrorMsg());
             } else {
                 ptr = MapViewOfFile3(backing, process, reinterpret_cast<PVOID>(virtual_addr),
-                                     phys_addr, size, MEM_REPLACE_PLACEHOLDER, prot, nullptr, 0);
+                                     phys_addr, size, MEM_REPLACE_PLACEHOLDER,
+                                     PAGE_EXECUTE_READWRITE, nullptr, 0);
+                ASSERT_MSG(ptr, "MapViewOfFile3 failed. {}", Common::GetLastErrorMsg());
+                DWORD resultvar;
+                bool ret = VirtualProtect(ptr, size, prot, &resultvar);
+                ASSERT_MSG(ret, "VirtualProtect failed. {}", Common::GetLastErrorMsg());
             }
         } else {
             ptr =
                 VirtualAlloc2(process, reinterpret_cast<PVOID>(virtual_addr), size,
                               MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER, prot, nullptr, 0);
         }
-        //  ASSERT_MSG(ptr, "{}", Common::GetLastErrorMsg());
+        ASSERT_MSG(ptr, "{}", Common::GetLastErrorMsg());
         return ptr;
     }
 
@@ -428,9 +433,9 @@ struct AddressSpace::Impl {
             const size_t range_size = std::min(region.base + region.size, virtual_end) - range_addr;
             DWORD old_flags{};
             if (!VirtualProtectEx(process, LPVOID(range_addr), range_size, new_flags, &old_flags)) {
-                // UNREACHABLE_MSG(
-                //     "Failed to change virtual memory protection for address {:#x}, size {:#x}",
-                //     range_addr, range_size);
+                UNREACHABLE_MSG(
+                    "Failed to change virtual memory protection for address {:#x}, size {:#x}",
+                    range_addr, range_size);
             }
         }
     }
