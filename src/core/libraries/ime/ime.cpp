@@ -8,6 +8,7 @@
 #include "core/libraries/ime/ime_ui.h"
 #include "core/libraries/libs.h"
 #include "core/tls.h"
+#include <input/input_handler.h>
 
 namespace Libraries::Ime {
 
@@ -80,10 +81,17 @@ public:
 
     Error Update(OrbisImeEventHandler handler) {
         if (!m_ime_mode) {
-            /* We don't handle any events for ImeKeyboard */
+
+            LOG_INFO(Lib_Ime, "Update !m_ime_mode");
+            OrbisImeEvent ev;
+            while (Input::g_keyboard_state.PopEvent(ev)) {
+                
+                Execute(handler, &ev, false); // Execute calls handler(m_arg, &ev)
+            }
+            
             return Error::OK;
         }
-
+        LOG_INFO(Lib_Ime, "Update m_ime_mode");
         std::unique_lock<std::mutex> lock{g_ime_state->queue_mutex};
 
         while (!g_ime_state->event_queue.empty()) {
@@ -727,7 +735,7 @@ Error PS4_SYSV_ABI sceImeUpdate(OrbisImeEventHandler handler) {
     if (g_keyboard_handler) {
         g_keyboard_handler->Update(handler);
     }
-
+    LOG_INFO(Lib_Ime, "sceImeUpdate called");
     if (!g_ime_handler && !g_keyboard_handler) {
         LOG_ERROR(Lib_Ime, "sceImeUpdate called with no active handler");
         return Error::OK;

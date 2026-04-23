@@ -1129,7 +1129,6 @@ void Translator::V_CMP_U64(ConditionOp op, bool is_signed, bool set_exec, const 
         ASSERT_MSG(-s32(inst.src[1].code) + SignedConstIntNegMin - 1 == -1,
                    "SignedConstIntNeg must be -1");
     }
-
     const IR::U1 src0 = [&] {
         switch (inst.src[0].field) {
         case OperandField::ScalarGPR:

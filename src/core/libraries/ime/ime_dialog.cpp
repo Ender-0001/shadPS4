@@ -21,6 +21,10 @@ static ImeDialogState g_ime_dlg_state{};
 static ImeDialogUi g_ime_dlg_ui;
 
 static bool IsValidOption(OrbisImeOption option, OrbisImeType type) {
+
+    if (type == OrbisImeType::Mail)
+        return true;
+
     if (False(~option & (OrbisImeOption::MULTILINE |
                          OrbisImeOption::NO_AUTO_CAPITALIZATION /* NoAutoCompletion */))) {
         return false;

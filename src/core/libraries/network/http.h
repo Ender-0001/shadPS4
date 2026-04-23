@@ -3,7 +3,14 @@
 
 #pragma once
 
+#include <map>
 #include <mutex>
+#include <string>
+#include <future>
+
+#include <externals/cpp-httplib/httplib.h>
+//#include <httplib.h>
+
 #include "common/types.h"
 #include "core/libraries/network/ssl.h"
 
@@ -24,6 +31,375 @@ struct OrbisHttpUriElement {
     char* fragment;
     u16 port;
     u8 reserved[10];
+};
+typedef void* OrbisHttpEpollHandle;
+typedef struct OrbisHttpNBEvent {
+    uint32_t events;
+    uint32_t eventDetail;
+    int id;
+    void* userArg;
+} OrbisHttpNBEvent;
+
+#define ORBIS_HTTP_NB_EVENT_IN 0x00000001
+#define ORBIS_HTTP_NB_EVENT_OUT 0x00000002
+#define ORBIS_HTTP_NB_EVENT_SOCK_ERR 0x00000008
+#define ORBIS_HTTP_NB_EVENT_HUP 0x00000010
+#define ORBIS_HTTP_NB_EVENT_ICM 0x00000020
+#define ORBIS_HTTP_NB_EVENT_RESOLVED 0x00010000
+#define ORBIS_HTTP_NB_EVENT_RESOLVER_ERR 0x00020000
+
+#define ORBIS_HTTP_DEFAULT_RESOLVER_TIMEOUT (0) // libnet default
+#define ORBIS_HTTP_DEFAULT_RESOLVER_RETRY (0)   // libnet default
+#define ORBIS_HTTP_DEFAULT_CONNECT_TIMEOUT (30 * 1000 * 1000U)
+#define ORBIS_HTTP_DEFAULT_SEND_TIMEOUT (120 * 1000 * 1000U)
+#define ORBIS_HTTP_DEFAULT_RECV_TIMEOUT (120 * 1000 * 1000U)
+#define ORBIS_HTTP_DEFAULT_RECV_BLOCK_SIZE (1500U)
+#define ORBIS_HTTP_DEFAULT_RESPONSE_HEADER_MAX (5000U)
+#define ORBIS_HTTP_DEFAULT_REDIRECT_MAX (6U)
+#define ORBIS_HTTP_DEFAULT_TRY_AUTH_MAX (6U)
+
+enum OrbisHttpRequestMethod : s32 {
+    ORBIS_HTTP_REQUEST_METHOD_INVALID = -1,
+    ORBIS_HTTP_REQUEST_METHOD_GET = 0,
+    ORBIS_HTTP_REQUEST_METHOD_POST = 1,
+    ORBIS_HTTP_REQUEST_METHOD_HEAD = 2,
+    ORBIS_HTTP_REQUEST_METHOD_OPTIONS = 3,
+    ORBIS_HTTP_REQUEST_METHOD_PUT = 4,
+    ORBIS_HTTP_REQUEST_METHOD_DELETE = 5,
+    ORBIS_HTTP_REQUEST_METHOD_TRACE = 6,
+    ORBIS_HTTP_REQUEST_METHOD_CONNECT = 7
+};
+
+typedef enum {
+    SCE_HTTP_CONTENTLEN_EXIST,
+    SCE_HTTP_CONTENTLEN_NOT_FOUND,
+    SCE_HTTP_CONTENTLEN_CHUNK_ENC
+} SceHttpContentLengthType;
+
+class RequestTemplate {
+public:
+    int id;
+    std::map<std::string, std::string> headers;
+    std::string user_agent = {};
+    bool is_async = false;
+
+    RequestTemplate() : id(0) {}
+    explicit RequestTemplate(int tmpl_id, std::string user_agent = "") : id(tmpl_id), user_agent(user_agent) {}
+};
+
+class RequestObj {
+public:
+    int id;
+    RequestTemplate* req_template = nullptr;
+
+    void SendRequest() {
+        request_future = std::async(std::launch::async, [this] { _SendRequest(); });
+        
+        if (!req_template->is_async) {
+            WaitForRequest();
+        }
+    }
+
+    bool IsRequestComplete() {
+        if (!request_future.valid())
+            return true;
+        return request_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
+
+    void WaitForRequest() {
+        if (request_future.valid()) {
+            request_future.get();
+        }
+    }
+
+    s32 ReadData(char* dest, u64 size) {
+
+        if (!dest || size == 0 || !result_body || result_body_size == 0)
+            return 0;
+
+        if (current_result_read_chunk_index >= result_body_size)
+            return 0;
+
+        size_t remaining = result_body_size - current_result_read_chunk_index;
+        size_t to_copy = remaining < size ? remaining : size;
+
+        std::memcpy(dest, result_body + current_result_read_chunk_index, to_copy);
+
+        current_result_read_chunk_index += to_copy;
+
+        return static_cast<s32>(to_copy);
+    }
+
+    char* GetResultHeaders()
+    {
+        return result_headers;
+    }
+
+    u32 GetResultHeadersSize() {
+        return result_headers_size;
+    }
+
+    std::string GetUrl() const {
+        return url;
+    }
+
+    s32 GetMethod() const {
+        return static_cast<s32>(method);
+    }
+
+    void SetUrl(const std::string& new_url) {
+
+        if (new_url.empty()) {
+            return;
+        }
+
+        //TODO checks
+        url = new_url;
+
+        size_t scheme_end = url.find("://");
+        size_t path_start = url.find('/', scheme_end + 3);
+
+        if (path_start == std::string::npos) {
+            host = url;
+            path = "/";
+        } else {
+            host = url.substr(0, path_start);
+            path = url.substr(path_start);
+        }
+    }
+
+    void SetPostData(const void* data, u64 size) {
+        
+        if (data == nullptr || size == 0) {
+            
+            post_data = nullptr;
+            post_data_size = 0;
+            return;
+        }
+
+        post_data_size = size;
+
+        post_data = new u8[post_data_size];
+        std::memcpy(post_data, data, post_data_size);
+    }
+
+    void AddHeader(const char* name, const char* value) {
+
+        req_headers[std::string(name)] = std::string(value);
+    }
+
+    bool IsSuccessful() const {
+        return status_code / 100 == 2;
+    }
+
+    u32 GetStatusCode() const {
+        return status_code;
+    }
+
+    u64 GetContentLength() const {
+        return static_cast<u64>(result_body_size);
+    }
+
+    bool IsSent() const {
+        return is_sent;
+    }
+
+    bool IsCompleted() {
+        return status_code != -1;
+    }
+
+    void DebugPrint() const {
+        LOG_CRITICAL(Lib_Http, "===== HTTP Request Debug Info =====");
+
+        LOG_CRITICAL(Lib_Http, "Is Sent:        {}", (is_sent ? "true" : "false"));
+        LOG_CRITICAL(Lib_Http, "Future Valid:   {}", (request_future.valid() ? "true" : "false"));
+        LOG_CRITICAL(Lib_Http, "Status Code:    {}", status_code);
+        LOG_CRITICAL(Lib_Http, "Method (Enum):  {}", static_cast<int>(method));
+
+        LOG_CRITICAL(Lib_Http, "URL:            {}", (url.empty() ? "[Empty]" : url));
+        LOG_CRITICAL(Lib_Http, "Host:           {}", (host.empty() ? "[Empty]" : host));
+        LOG_CRITICAL(Lib_Http, "Path:           {}", (path.empty() ? "[Empty]" : path));
+
+        LOG_CRITICAL(Lib_Http, "Post Data Size: {} bytes", post_data_size);
+        LOG_CRITICAL(Lib_Http, "Post Data Ptr:  {}", post_data);
+
+        if (post_data && post_data_size > 0) {
+            std::string preview_str;
+            const char* preview = static_cast<const char*>(post_data);
+            for (size_t i = 0; i < std::min<size_t>(post_data_size, 20); ++i) {
+                char c = preview[i];
+                preview_str += (std::isprint(static_cast<unsigned char>(c)) ? c : '.');
+            }
+            LOG_CRITICAL(Lib_Http, "  -> Preview: {}...", preview_str);
+        }
+
+        LOG_CRITICAL(Lib_Http, "Content Length: {}", content_length);
+        LOG_CRITICAL(Lib_Http, "Body Size:      {} bytes", result_body_size);
+        LOG_CRITICAL(Lib_Http, "Read Chunk Idx: {}", current_result_read_chunk_index);
+        LOG_CRITICAL(Lib_Http, "Body Pointer:   {}", (void*)result_body);
+
+        if (result_body) {
+            std::string body_preview;
+            for (size_t i = 0; i < std::min<size_t>(result_body_size, 50); ++i) {
+                char c = result_body[i];
+                body_preview += (std::isprint(static_cast<unsigned char>(c)) ? c : '.');
+            }
+            LOG_CRITICAL(Lib_Http, "  -> Body Preview: {}...", body_preview);
+        }
+
+        LOG_CRITICAL(Lib_Http, "Request Headers ({})", req_headers.size());
+        if (req_headers.empty()) {
+            LOG_CRITICAL(Lib_Http, "  [None]");
+        } else {
+            for (const auto& pair : req_headers) {
+                LOG_CRITICAL(Lib_Http, "  [{}] : {}", pair.first, pair.second);
+            }
+        }
+
+        LOG_CRITICAL(Lib_Http, "===================================");
+    }
+
+    RequestObj()
+        : id(0), req_template(nullptr), method(ORBIS_HTTP_REQUEST_METHOD_INVALID), url(""),
+          content_length(0), status_code(-1), result_body(nullptr), result_body_size(-1),
+          current_result_read_chunk_index(0), post_data(nullptr), is_sent(false) {}
+    explicit RequestObj(s32 req_id, RequestTemplate* req_template, s32 method, std::string url_str, u64 cntLen)
+        : id(req_id), req_template(req_template), method(static_cast<OrbisHttpRequestMethod>(method)),
+          content_length(cntLen), 
+          status_code(-1), result_body(nullptr), result_body_size(-1),
+          current_result_read_chunk_index(0), post_data(nullptr), is_sent(false) {
+
+        SetUrl(url_str);
+    }
+    void freeData()
+    {
+        if (result_body)
+            delete[] result_body;
+
+        if (result_headers)
+            delete[] result_headers;
+    }
+
+private:
+    std::future<void> request_future = {};
+
+    char* result_body = nullptr;
+    s32 current_result_read_chunk_index = 0;
+    s32 result_body_size = 0;
+    char* result_headers;
+    s32 result_headers_size;
+
+    OrbisHttpRequestMethod method = ORBIS_HTTP_REQUEST_METHOD_INVALID;
+    std::string host = {};
+    std::string path = {};
+    u64 content_length = 0;
+
+    s32 status_code = -1; // check
+    bool is_sent = false;
+    
+    std::map<std::string, std::string> req_headers;
+    std::string url = {};
+    void* post_data = nullptr;
+    u64 post_data_size = 0;
+
+    void _SendRequest() {
+
+        httplib::Client cli(host);
+        cli.set_proxy("127.0.0.1", 8888);
+        
+
+        httplib::Result response = {};
+
+        auto templ_headers = req_template->headers;
+
+        httplib::Headers headers;
+        for (const auto& pair : templ_headers) {
+            headers.emplace(pair.first, pair.second);
+        }
+
+        for (const auto& pair : req_headers) {
+            headers.emplace(pair.first, pair.second);
+        }
+        
+
+        is_sent = true;
+
+        switch (method) {
+        case ORBIS_HTTP_REQUEST_METHOD_GET:
+
+            response = cli.Get(path, headers);
+            break;
+        case ORBIS_HTTP_REQUEST_METHOD_POST:
+
+            response = cli.Post(path, headers, static_cast<char*>(post_data),
+                                static_cast<size_t>(post_data_size), "");
+            break;
+
+        case ORBIS_HTTP_REQUEST_METHOD_DELETE:
+            response = cli.Delete(path, headers);
+            break;
+
+        case ORBIS_HTTP_REQUEST_METHOD_HEAD:
+            response = cli.Head(path);
+            break;
+
+        case ORBIS_HTTP_REQUEST_METHOD_OPTIONS:
+            response = cli.Options(path);
+            break;
+
+        case ORBIS_HTTP_REQUEST_METHOD_PUT:
+            response = cli.Put(path);
+            break;
+
+        default:
+        case ORBIS_HTTP_REQUEST_METHOD_INVALID:
+            LOG_ERROR(Lib_Http, "Invalid HTTP method");
+            return;
+        }
+
+        if (!response) {
+            LOG_ERROR(Lib_Http, "RESPONSE IS NULLPTR");
+            return;
+        }
+
+        status_code = response->status;
+
+        //if (response && response->status / 100 == 2) 
+        {
+
+            result_body_size = static_cast<s32>(response->body.size());
+            if (result_body_size > 0) {
+                result_body = new char[result_body_size];
+                std::memcpy(result_body, response->body.data(), result_body_size);
+            } else
+                result_body = nullptr;
+
+            std::string str;
+            for (auto it : response->headers)
+            {
+                std::string header = it.first.c_str();
+                std::string value = it.second.c_str();
+                str.append(header);
+                str.append(": ");
+                str.append(value);
+                str.append("\r\n");
+            }
+            result_headers_size = static_cast<s32>(str.size());
+            if (result_headers_size > 0)
+            {
+                result_headers = new char[result_headers_size];
+                std::memcpy(result_headers, str.data(), result_headers_size);
+            }
+            else
+            {
+
+                result_headers = new char[1];
+                *result_headers = '\0';
+                result_headers_size = 1;
+            }
+            
+        }
+    }
 };
 
 struct HttpRequestInternal {
@@ -50,13 +426,13 @@ int PS4_SYSV_ABI sceHttpCookieFlush();
 int PS4_SYSV_ABI sceHttpCookieImport();
 int PS4_SYSV_ABI sceHttpCreateConnection();
 int PS4_SYSV_ABI sceHttpCreateConnectionWithURL(int tmplId, const char* url, bool enableKeepalive);
-int PS4_SYSV_ABI sceHttpCreateEpoll();
+int PS4_SYSV_ABI sceHttpCreateEpoll(int libhttpCtxId, OrbisHttpEpollHandle* eh);
 int PS4_SYSV_ABI sceHttpCreateRequest();
 int PS4_SYSV_ABI sceHttpCreateRequest2();
-int PS4_SYSV_ABI sceHttpCreateRequestWithURL(int connId, s32 method, const char* url,
-                                             u64 contentLength);
+int PS4_SYSV_ABI sceHttpCreateRequestWithURL(s32 conn_id, s32 method, const char* url,
+                                             u64 content_length);
 int PS4_SYSV_ABI sceHttpCreateRequestWithURL2();
-int PS4_SYSV_ABI sceHttpCreateTemplate();
+int PS4_SYSV_ABI sceHttpCreateTemplate(s32 conn_id, const char* user_agent, s32 http_v, s32 flags);
 int PS4_SYSV_ABI sceHttpDbgEnableProfile();
 int PS4_SYSV_ABI sceHttpDbgGetConnectionStat();
 int PS4_SYSV_ABI sceHttpDbgGetRequestStat();
@@ -65,10 +441,10 @@ int PS4_SYSV_ABI sceHttpDbgShowConnectionStat();
 int PS4_SYSV_ABI sceHttpDbgShowMemoryPoolStat();
 int PS4_SYSV_ABI sceHttpDbgShowRequestStat();
 int PS4_SYSV_ABI sceHttpDbgShowStat();
-int PS4_SYSV_ABI sceHttpDeleteConnection();
-int PS4_SYSV_ABI sceHttpDeleteRequest();
+int PS4_SYSV_ABI sceHttpDeleteConnection(int connId);
+int PS4_SYSV_ABI sceHttpDeleteRequest(s32 req_id);
 int PS4_SYSV_ABI sceHttpDeleteTemplate();
-int PS4_SYSV_ABI sceHttpDestroyEpoll();
+int PS4_SYSV_ABI sceHttpDestroyEpoll(int libhttpCtxId, OrbisHttpEpollHandle eh);
 int PS4_SYSV_ABI sceHttpGetAcceptEncodingGZIPEnabled();
 int PS4_SYSV_ABI sceHttpGetAllResponseHeaders(int reqId, char** header, u64* headerSize);
 int PS4_SYSV_ABI sceHttpGetAuthEnabled();
@@ -79,25 +455,25 @@ int PS4_SYSV_ABI sceHttpGetCookieEnabled();
 int PS4_SYSV_ABI sceHttpGetCookieStats();
 int PS4_SYSV_ABI sceHttpGetEpoll();
 int PS4_SYSV_ABI sceHttpGetEpollId();
-int PS4_SYSV_ABI sceHttpGetLastErrno();
+int PS4_SYSV_ABI sceHttpGetLastErrno(int reqId, int* errNum);
 int PS4_SYSV_ABI sceHttpGetMemoryPoolStats();
 int PS4_SYSV_ABI sceHttpGetNonblock();
 int PS4_SYSV_ABI sceHttpGetRegisteredCtxIds();
-int PS4_SYSV_ABI sceHttpGetResponseContentLength();
-int PS4_SYSV_ABI sceHttpGetStatusCode(int reqId, int* statusCode);
+int PS4_SYSV_ABI sceHttpGetResponseContentLength(u32 req_id, u32* _flag, u64* out_content_length);
+int PS4_SYSV_ABI sceHttpGetStatusCode(s32 req_id, s32* status_code);
 int PS4_SYSV_ABI sceHttpInit(int libnetMemId, int libsslCtxId, u64 poolSize);
 int PS4_SYSV_ABI sceHttpParseResponseHeader(const char* header, u64 headerLen, const char* fieldStr,
                                             const char** fieldValue, u64* valueLen);
 int PS4_SYSV_ABI sceHttpParseStatusLine(const char* statusLine, u64 lineLen, int32_t* httpMajorVer,
                                         int32_t* httpMinorVer, int32_t* responseCode,
                                         const char** reasonPhrase, u64* phraseLen);
-int PS4_SYSV_ABI sceHttpReadData(s32 reqId, void* data, u64 size);
+int PS4_SYSV_ABI sceHttpReadData(u32 req_id, char* dest, u32 size);
 int PS4_SYSV_ABI sceHttpRedirectCacheFlush();
 int PS4_SYSV_ABI sceHttpRemoveRequestHeader();
 int PS4_SYSV_ABI sceHttpRequestGetAllHeaders();
 int PS4_SYSV_ABI sceHttpsDisableOption();
 int PS4_SYSV_ABI sceHttpsDisableOptionPrivate();
-int PS4_SYSV_ABI sceHttpsEnableOption();
+int PS4_SYSV_ABI sceHttpsEnableOption(u32 options);
 int PS4_SYSV_ABI sceHttpsEnableOptionPrivate();
 int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size);
 int PS4_SYSV_ABI sceHttpSetAcceptEncodingGZIPEnabled();
@@ -119,7 +495,7 @@ int PS4_SYSV_ABI sceHttpSetEpoll();
 int PS4_SYSV_ABI sceHttpSetEpollId();
 int PS4_SYSV_ABI sceHttpSetHttp09Enabled();
 int PS4_SYSV_ABI sceHttpSetInflateGZIPEnabled();
-int PS4_SYSV_ABI sceHttpSetNonblock();
+int PS4_SYSV_ABI sceHttpSetNonblock(s32 tmpl_id, bool enable);
 int PS4_SYSV_ABI sceHttpSetPolicyOption();
 int PS4_SYSV_ABI sceHttpSetPriorityOption();
 int PS4_SYSV_ABI sceHttpSetProxy();
@@ -155,7 +531,7 @@ int PS4_SYSV_ABI sceHttpUriParse(OrbisHttpUriElement* out, const char* srcUri, v
                                  u64* require, u64 prepare);
 int PS4_SYSV_ABI sceHttpUriSweepPath(char* dst, const char* src, u64 srcSize);
 int PS4_SYSV_ABI sceHttpUriUnescape(char* out, u64* require, u64 prepare, const char* in);
-int PS4_SYSV_ABI sceHttpWaitRequest();
+int PS4_SYSV_ABI sceHttpWaitRequest(OrbisHttpEpollHandle eh, OrbisHttpNBEvent* nbev, int maxevents,int timeout);
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym);
 } // namespace Libraries::Http
