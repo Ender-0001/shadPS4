@@ -1140,7 +1140,7 @@ add_executable(shadps4
     src/emulator.h
     src/sdl_window.h
     src/sdl_window.cpp
-)
+ "src/core/libraries/mouse/mouse_common.h")
 
 create_target_directory_groups(shadps4)
 
