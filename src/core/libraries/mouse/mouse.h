@@ -3,6 +3,7 @@
 
 #pragma once
 #include "common/types.h"
+#include "mouse_common.h"
 
 namespace Core::Loader {
 class SymbolsResolver;
@@ -19,8 +20,8 @@ int PS4_SYSV_ABI sceMouseDisconnectPort();
 int PS4_SYSV_ABI sceMouseGetDeviceInfo();
 int PS4_SYSV_ABI sceMouseInit();
 int PS4_SYSV_ABI sceMouseMbusInit();
-int PS4_SYSV_ABI sceMouseOpen();
-int PS4_SYSV_ABI sceMouseRead();
+int PS4_SYSV_ABI sceMouseOpen(int userId, int type, int index, SceMouseOpenParam* pParam);
+int PS4_SYSV_ABI sceMouseRead(int handle, SceMouseData* pData, int num);
 int PS4_SYSV_ABI sceMouseSetHandType();
 int PS4_SYSV_ABI sceMouseSetPointerSpeed();
 int PS4_SYSV_ABI sceMouseSetProcessPrivilege();

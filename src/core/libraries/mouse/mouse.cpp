@@ -6,6 +6,15 @@
 #include "core/libraries/error_codes.h"
 #include "core/libraries/libs.h"
 #include "mouse.h"
+#include <SDL3/SDL_mouse.h>
+#include <sdl_window.h>
+
+#define SCE_MOUSE_BUTTON_PRIMARY 0x00000001
+#define SCE_MOUSE_BUTTON_SECONDARY 0x00000002
+#define SCE_MOUSE_BUTTON_OPTIONAL 0x00000004
+#define SCE_MOUSE_DUMMY_HANDLE 67
+
+extern Frontend::WindowSDL* g_window;
 
 namespace Libraries::Mouse {
 
@@ -54,14 +63,42 @@ int PS4_SYSV_ABI sceMouseMbusInit() {
     return ORBIS_OK;
 }
 
-int PS4_SYSV_ABI sceMouseOpen() {
-    LOG_ERROR(Lib_Mouse, "(STUBBED) called");
-    return ORBIS_OK;
+int PS4_SYSV_ABI sceMouseOpen(int userId, int type, int index, SceMouseOpenParam* pParam) {
+    g_window->CaptureMouse(true);
+    return SCE_MOUSE_DUMMY_HANDLE;
 }
 
-int PS4_SYSV_ABI sceMouseRead() {
-    LOG_DEBUG(Lib_Mouse, "(STUBBED) called");
-    return ORBIS_OK;
+int PS4_SYSV_ABI sceMouseRead(int handle, SceMouseData* pData, int num) {
+    if (handle != SCE_MOUSE_DUMMY_HANDLE)
+        return ORBIS_FAIL;
+    if (!pData || num <= 0)
+        return ORBIS_FAIL;
+
+    float dx, dy;
+    uint32_t sdlButtons = SDL_GetRelativeMouseState(&dx, &dy);
+
+    auto now = std::chrono::high_resolution_clock::now();
+    uint64_t timestamp =
+        std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
+
+    SceMouseData& data = pData[0];
+    memset(&data, 0, sizeof(SceMouseData));
+
+    data.timestamp = timestamp;
+    data.connected = true;
+
+    data.xAxis = static_cast<int32_t>(dx);
+    data.yAxis = static_cast<int32_t>(dy);
+    data.wheel = 0; // ? event
+
+    if (sdlButtons & SDL_BUTTON_LMASK)
+        data.buttons |= SCE_MOUSE_BUTTON_PRIMARY;
+    if (sdlButtons & SDL_BUTTON_RMASK)
+        data.buttons |= SCE_MOUSE_BUTTON_SECONDARY;
+    if (sdlButtons & SDL_BUTTON_X1MASK)
+        data.buttons |= SCE_MOUSE_BUTTON_OPTIONAL;
+
+    return 1;
 }
 
 int PS4_SYSV_ABI sceMouseSetHandType() {
@@ -76,6 +113,11 @@ int PS4_SYSV_ABI sceMouseSetPointerSpeed() {
 
 int PS4_SYSV_ABI sceMouseSetProcessPrivilege() {
     LOG_ERROR(Lib_Mouse, "(STUBBED) called");
+    return ORBIS_OK;
+}
+
+int PS4_SYSV_ABI sceImeVshUpdateContext2(void*) {
+    LOG_ERROR(Lib_Ime, "(STUBBED) called");
     return ORBIS_OK;
 }
 

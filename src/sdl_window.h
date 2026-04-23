@@ -77,6 +77,8 @@ public:
     void RequestKeyboard();
     void ReleaseKeyboard();
 
+    void CaptureMouse(bool capture);
+
 private:
     void OnResize();
     void OnKeyboardMouseInput(const SDL_Event* event);
