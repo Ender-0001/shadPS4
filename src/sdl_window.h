@@ -79,6 +79,8 @@ public:
 
     void CaptureMouse(bool capture);
 
+    void SetShouldIgnoreCustomMappings(bool ignore);
+
 private:
     void OnResize();
     void OnKeyboardMouseInput(const SDL_Event* event);
@@ -92,6 +94,7 @@ private:
     SDL_Window* window{};
     bool is_shown{};
     bool is_open{true};
+    bool should_ignore_custom_mappings = false;
 };
 
 } // namespace Frontend

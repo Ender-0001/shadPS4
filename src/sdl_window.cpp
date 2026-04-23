@@ -336,6 +336,11 @@ void WindowSDL::CaptureMouse(bool capture) {
         SDL_ShowCursor();
 }
 
+void WindowSDL::SetShouldIgnoreCustomMappings(bool ignore) 
+{
+    should_ignore_custom_mappings = ignore;
+}
+
 void WindowSDL::OnResize() {
     SDL_GetWindowSizeInPixels(window, &width, &height);
     ImGui::Core::OnResize();
@@ -704,11 +709,14 @@ void WindowSDL::OnKeyboardMouseInput(const SDL_Event* event) {
     }
 
     // add/remove it from the list
-    bool inputs_changed = Input::UpdatePressedKeys(input_event);
+    if (!should_ignore_custom_mappings)
+    {
+        bool inputs_changed = Input::UpdatePressedKeys(input_event);
 
-    // update bindings
-    if (inputs_changed) {
-        Input::ActivateOutputsFromInputs();
+        // update bindings
+        if (inputs_changed) {
+            Input::ActivateOutputsFromInputs();
+        }
     }
 
     if (event->type == SDL_EVENT_KEY_DOWN || event->type == SDL_EVENT_KEY_UP) {

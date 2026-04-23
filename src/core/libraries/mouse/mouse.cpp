@@ -19,7 +19,8 @@ extern Frontend::WindowSDL* g_window;
 namespace Libraries::Mouse {
 
 int PS4_SYSV_ABI sceMouseClose() {
-    LOG_ERROR(Lib_Mouse, "(STUBBED) called");
+    g_window->CaptureMouse(false);
+    g_window->SetShouldIgnoreCustomMappings(false);
     return ORBIS_OK;
 }
 
@@ -65,6 +66,7 @@ int PS4_SYSV_ABI sceMouseMbusInit() {
 
 int PS4_SYSV_ABI sceMouseOpen(int userId, int type, int index, SceMouseOpenParam* pParam) {
     g_window->CaptureMouse(true);
+    g_window->SetShouldIgnoreCustomMappings(true);
     return SCE_MOUSE_DUMMY_HANDLE;
 }
 
