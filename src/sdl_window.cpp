@@ -328,6 +328,14 @@ void WindowSDL::ReleaseKeyboard() {
     }
 }
 
+void WindowSDL::CaptureMouse(bool capture) {
+    SDL_SetWindowRelativeMouseMode(window, capture);
+    if (capture)
+        SDL_HideCursor();
+    else
+        SDL_ShowCursor();
+}
+
 void WindowSDL::OnResize() {
     SDL_GetWindowSizeInPixels(window, &width, &height);
     ImGui::Core::OnResize();
